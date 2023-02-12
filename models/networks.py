@@ -509,11 +509,11 @@ class ResnextBlock(nn.Module):
         self.group_chnls = cardinality * group_depth
         self.conv1 = IN_Conv2d(dim, self.group_chnls, 1, stride=1, padding=0)
         self.conv2 = IN_Conv2d(self.group_chnls, self.group_chnls, 3, stride=1, padding=nn.ReflectionPad2d(1), groups=cardinality)
-        self.conv3 = nn_Conv2d(self.group_chnls, 256, 1, stride=1, padding=0)
-        self.in = nn.InstanceNorm2d(256)
+        self.conv3 = nn_Conv2d(self.group_chnls, dim, 1, stride=1, padding=0)
+        self.in = nn.InstanceNorm2d(dim)
         self.short_cut = nn.Sequential(
-            nn_Conv2d(dim, 256, 1, stride=0, use_bias=False),
-            nn.InstanceNorm2d(256)
+            nn_Conv2d(dim, dim, 1, stride=0, use_bias=False),
+            nn.InstanceNorm2d(dim)
         )
 
     def forward(self, x):
