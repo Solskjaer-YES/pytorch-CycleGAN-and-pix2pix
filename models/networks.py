@@ -436,7 +436,107 @@ class ResnetBlock(nn.Module):
         out = x + self.conv_block(x)  # add skip connections
         return out
 
+class ResNeXtGenerator(nn.Module):
+    """Resnet-based generator that consists of Resnet blocks between a few downsampling/upsampling operations.
 
+    We adapt Torch code and idea from Justin Johnson's neural style transfer project(https://github.com/jcjohnson/fast-neural-style)
+    """
+
+    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, padding_type='reflect'):
+        """Construct a Resnet-based generator
+
+        Parameters:
+            input_nc (int)      -- the number of channels in input images
+            output_nc (int)     -- the number of channels in output images
+            ngf (int)           -- the number of filters in the last conv layer
+            norm_layer          -- normalization layer
+            use_dropout (bool)  -- if use dropout layers
+            n_blocks (int)      -- the number of ResNet blocks
+            padding_type (str)  -- the name of padding layer in conv layers: reflect | replicate | zero
+        """
+        assert(n_blocks >= 0)
+        super(ResNeXtGenerator, self).__init__()
+        if type(norm_layer) == functools.partial:
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+
+        model = [nn.ReflectionPad2d(3),
+                 nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
+                 norm_layer(ngf),
+                 nn.ReLU(True)]
+
+        n_downsampling = 2
+        for i in range(n_downsampling):  # add downsampling layers
+            mult = 2 ** i
+            model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+                      norm_layer(ngf * mult * 2),
+                      nn.ReLU(True)]
+
+        mult = 2 ** n_downsampling
+        for i in range(n_blocks):       # add ResNet blocks
+
+            model += [ResnextBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias, cardinality=32, group_depth=4)]
+
+        for i in range(n_downsampling):  # add upsampling layers
+            mult = 2 ** (n_downsampling - i)
+            model += [nn.Upsample(scale_factor = 2, mode='nearest'),
+                      nn.ReflectionPad2d(1),
+                      nn.Conv2d(ngf * mult, int(ngf * mult / 2), kernel_size=3, stride=1, padding=0),
+                
+#                 nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
+#                                          kernel_size=3, stride=2,
+#                                          padding=1, output_padding=1,
+#                                          bias=use_bias),
+                      norm_layer(int(ngf * mult / 2)),
+                      nn.ReLU(True)]
+        model += [nn.ReflectionPad2d(3)]
+        model += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
+        model += [nn.Tanh()]
+
+        self.model = nn.Sequential(*model)
+
+    def forward(self, input):
+        """Standard forward"""
+        return self.model(input)
+    
+class ResnextBlock(nn.Module):
+    """Define a Resnet block"""
+
+    def __init__(self, dim, padding_type, norm_layer, use_dropout, use_bias, cardinality=32, group_depth=4):
+        
+        super(ResnextBlock, self).__init__()
+        self.group_chnls = cardinality * group_depth
+        self.conv1 = IN_Conv2d(dim, self.group_chnls, 1, stride=1, padding=0)
+        self.conv2 = IN_Conv2d(self.group_chnls, self.group_chnls, 3, stride=1, padding=nn.ReflectionPad2d(1), groups=cardinality)
+        self.conv3 = nn_Conv2d(self.group_chnls, 256, 1, stride=1, padding=0)
+        self.in = nn.InstanceNorm2d(256)
+        self.short_cut = nn.Sequential(
+            nn_Conv2d(dim, 256, 1, stride=0, use_bias=False),
+            nn.InstanceNorm2d(256)
+        )
+
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.conv2(out)
+        out = self.in(self.conv3(out))
+        out += self.short_cut(x)
+        return out 
+    
+class IN_Conv2d(nn.Module):
+    
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, dilation=1, groups=1, bias=False):
+    
+        super(IN_Conv2d, self).__init__()
+        self.seq = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride,
+                      padding=padding, dilation=dilation, groups=groups, bias=bias),
+            nn.InstanceNorm2d(out_channels)
+        )
+
+    def forward(self, x):
+        return F.relu(self.seq(x))    
+    
 class UnetGenerator(nn.Module):
     """Create a Unet-based generator"""
 
